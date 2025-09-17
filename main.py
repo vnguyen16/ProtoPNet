@@ -7,6 +7,21 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
+# --- adding custom dataset --- 🔴
+from histo_dataset_class import HistopathologyDataset
+from torch.utils.data import DataLoader
+from settings import train_csv, test_csv, train_push_csv, \
+                     train_batch_size, test_batch_size, train_push_batch_size, NEW_BASE
+# -----------------------------
+from settings import (
+    joint_optimizer_lrs,
+    warm_optimizer_lrs,
+    last_layer_optimizer_lr,
+    num_train_epochs,
+    num_warm_epochs,
+    coefs,
+) 
+
 import argparse
 import re
 
@@ -18,6 +33,7 @@ import train_and_test as tnt
 import save
 from log import create_logger
 from preprocess import mean, std, preprocess_input_function
+import wandb
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-gpuid', nargs=1, type=str, default='0') # python3 main.py -gpuid=0,1,2,3
@@ -42,6 +58,29 @@ shutil.copy(src=os.path.join(os.getcwd(), 'train_and_test.py'), dst=model_dir)
 log, logclose = create_logger(log_filename=os.path.join(model_dir, 'train.log'))
 img_dir = os.path.join(model_dir, 'img')
 makedir(img_dir)
+
+# initialize wandb ------------------------- 🔴
+wandb.init(
+    project="ProtoPNet-FEL",
+    name=f"{base_architecture}_{experiment_run}",
+    config={
+        "base_architecture": base_architecture,
+        "img_size": img_size,
+        "prototype_shape": tuple(prototype_shape),
+        "num_classes": num_classes,
+        "proto_act_fn": prototype_activation_function,
+        "add_on_layers_type": add_on_layers_type,
+        "train_batch_size": train_batch_size,
+        "test_batch_size": test_batch_size,
+        "joint_lrs": joint_optimizer_lrs,
+        "warm_lrs": warm_optimizer_lrs,
+        "last_lr": last_layer_optimizer_lr,
+        "num_train_epochs": num_train_epochs,
+        "num_warm_epochs": num_warm_epochs,
+        "coefs": coefs,
+    },
+)
+# ------------------------------------
 weight_matrix_filename = 'outputL_weights'
 prototype_img_filename_prefix = 'prototype-img'
 prototype_self_act_filename_prefix = 'prototype-self-act'
@@ -54,39 +93,71 @@ from settings import train_dir, test_dir, train_push_dir, \
 normalize = transforms.Normalize(mean=mean,
                                  std=std)
 
-# all datasets
-# train set
-train_dataset = datasets.ImageFolder(
-    train_dir,
-    transforms.Compose([
-        transforms.Resize(size=(img_size, img_size)),
-        transforms.ToTensor(),
-        normalize,
-    ]))
-train_loader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=train_batch_size, shuffle=True,
-    num_workers=4, pin_memory=False)
-# push set
-train_push_dataset = datasets.ImageFolder(
-    train_push_dir,
-    transforms.Compose([
-        transforms.Resize(size=(img_size, img_size)),
-        transforms.ToTensor(),
-    ]))
-train_push_loader = torch.utils.data.DataLoader(
-    train_push_dataset, batch_size=train_push_batch_size, shuffle=False,
-    num_workers=4, pin_memory=False)
-# test set
-test_dataset = datasets.ImageFolder(
-    test_dir,
-    transforms.Compose([
-        transforms.Resize(size=(img_size, img_size)),
-        transforms.ToTensor(),
-        normalize,
-    ]))
-test_loader = torch.utils.data.DataLoader(
-    test_dataset, batch_size=test_batch_size, shuffle=False,
-    num_workers=4, pin_memory=False)
+# all datasets------------------------------------- OG 
+# # train set
+# train_dataset = datasets.ImageFolder(
+#     train_dir,
+#     transforms.Compose([
+#         transforms.Resize(size=(img_size, img_size)),
+#         transforms.ToTensor(),
+#         normalize,
+#     ]))
+# train_loader = torch.utils.data.DataLoader(
+#     train_dataset, batch_size=train_batch_size, shuffle=True,
+#     num_workers=4, pin_memory=False)
+# # push set
+# train_push_dataset = datasets.ImageFolder(
+#     train_push_dir,
+#     transforms.Compose([
+#         transforms.Resize(size=(img_size, img_size)),
+#         transforms.ToTensor(),
+#     ]))
+# train_push_loader = torch.utils.data.DataLoader(
+#     train_push_dataset, batch_size=train_push_batch_size, shuffle=False,
+#     num_workers=4, pin_memory=False)
+# # test set
+# test_dataset = datasets.ImageFolder(
+#     test_dir,
+#     transforms.Compose([
+#         transforms.Resize(size=(img_size, img_size)),
+#         transforms.ToTensor(),
+#         normalize,
+#     ]))
+# test_loader = torch.utils.data.DataLoader(
+#     test_dataset, batch_size=test_batch_size, shuffle=False,
+#     num_workers=4, pin_memory=False)
+# ------------------------------------------------- OG 
+
+# custom histopathology dataset --------------------------------------- 🔴
+# Paths to metadata CSVs
+
+# # Metadata CSV paths
+# train_csv = r'C:\Users\Vivian\Documents\CONCH\metadata\patient_split_annotate\patch_csv_5x\train_patches.csv'
+# test_csv = r'C:\Users\Vivian\Documents\CONCH\metadata\patient_split_annotate\patch_csv_5x\test_patches.csv'
+# train_push_csv = r'C:\Users\Vivian\Documents\CONCH\metadata\patient_split_annotate\patch_csv_5x\val_patches.csv'  # if needed, otherwise reuse train_csv
+
+# Normalization assuming [0, 1] input from .npy
+normalize_transform = transforms.Normalize(mean=mean, std=std)
+
+# check new base dir
+print("NEW_BASE =", NEW_BASE) 
+
+# Define datasets
+train_dataset = HistopathologyDataset(train_csv, transform=normalize_transform, base_dir=NEW_BASE, img_size=224)
+test_dataset  = HistopathologyDataset(test_csv,  transform=normalize_transform, base_dir=NEW_BASE, img_size=224)
+train_push_dataset = HistopathologyDataset(train_push_csv, transform=None, base_dir=NEW_BASE, img_size=224)  # no normalization for push set
+
+# train_dataset = HistopathologyDataset(csv_file=train_csv, transform=normalize_transform)
+# test_dataset = HistopathologyDataset(csv_file=test_csv, transform=normalize_transform)
+# train_push_dataset = HistopathologyDataset(csv_file=train_push_csv, transform=None)  # no normalization for push set
+
+# Define loaders
+train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, num_workers=4, pin_memory=False, drop_last=True)
+test_loader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False, num_workers=4, pin_memory=False)
+train_push_loader = DataLoader(train_push_dataset, batch_size=train_push_batch_size, shuffle=False, num_workers=4, pin_memory=False)
+# ------------------------------------------------------------------- 🔴
+
+
 
 # we should look into distributed sampler more carefully at torch.utils.data.distributed.DistributedSampler(train_dataset)
 log('training set size: {0}'.format(len(train_loader.dataset)))
@@ -143,13 +214,44 @@ for epoch in range(num_train_epochs):
     if epoch < num_warm_epochs:
         tnt.warm_only(model=ppnet_multi, log=log)
         _ = tnt.train(model=ppnet_multi, dataloader=train_loader, optimizer=warm_optimizer,
-                      class_specific=class_specific, coefs=coefs, log=log)
+                      class_specific=class_specific, coefs=coefs, log=log, return_dict=True) # added return_dict=True 🔴
+        cur_lr = warm_optimizer.param_groups[0]['lr'] # 🔴               
     else:
         tnt.joint(model=ppnet_multi, log=log)
         joint_lr_scheduler.step()
         _ = tnt.train(model=ppnet_multi, dataloader=train_loader, optimizer=joint_optimizer,
-                      class_specific=class_specific, coefs=coefs, log=log)
+                      class_specific=class_specific, coefs=coefs, log=log, return_dict=True) # added return_dict=True 🔴
+        cur_lr = warm_optimizer.param_groups[0]['lr'] # 🔴
 
+    # Use test_loader as "val" for curves (swap to a real val loader when you have one) 🔴
+    val_m = tnt.test(model=ppnet_multi, dataloader=test_loader,
+                 class_specific=class_specific, log=log, return_dict=True)
+
+    # Log to W&B ----------------------------- 🔴
+    wandb.log({
+        "epoch": epoch,
+        "lr": cur_lr,
+        # train
+        "train/loss":        train_m["loss"],
+        "train/cross_ent":   train_m["cross_ent"],
+        "train/cluster":     train_m["cluster"],
+        "train/separation":  train_m["separation"],
+        "train/avg_separation": train_m["avg_separation"],
+        "train/acc":         train_m["acc_pct"],
+        "train/l1":          train_m["l1"],
+        "train/p_dist_pair": train_m["p_dist_pair"],
+        # val
+        "val/loss":          val_m["loss"],
+        "val/cross_ent":     val_m["cross_ent"],
+        "val/cluster":       val_m["cluster"],
+        "val/separation":    val_m["separation"],
+        "val/avg_separation":val_m["avg_separation"],
+        "val/acc":           val_m["acc_pct"],
+        "val/l1":            val_m["l1"],
+        "val/p_dist_pair":   val_m["p_dist_pair"],
+    }, step=epoch)
+    # End log to W&B ----------------------------- 🔴            
+    
     accu = tnt.test(model=ppnet_multi, dataloader=test_loader,
                     class_specific=class_specific, log=log)
     save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'nopush', accu=accu,
@@ -184,6 +286,6 @@ for epoch in range(num_train_epochs):
                                 class_specific=class_specific, log=log)
                 save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + '_' + str(i) + 'push', accu=accu,
                                             target_accu=0.70, log=log)
-   
+wandb.finish()   
 logclose()
 
